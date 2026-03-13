@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>⚡ llama.cpp Monitor</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d1117;color:#e6edf3;font-family:-apple-system,system-ui,sans-serif;padding:12px;font-size:13px}
+h1{font-size:16px;color:#58a6ff}
+.hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.status{font-size:11px;padding:3px 8px;border-radius:4px;background:#238636;color:#fff}
+.status.down{background:#da3633}
+.top{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:10px}
+.card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;text-align:center}
+.card .v{font-size:26px;font-weight:700;color:#58a6ff;line-height:1.2}
+.card .v.g{color:#3fb950}.card .v.o{color:#d29922}.card .v.r{color:#f85149}.card .v.p{color:#bc8cff}
+.card .l{font-size:10px;color:#8b949e;margin-top:2px}
+.card .sub{font-size:10px;color:#58a6ff;margin-top:2px}
+.hw{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+.hw-card{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px}
+.hw-card h3{font-size:11px;color:#8b949e;margin-bottom:6px;text-transform:uppercase;letter-spacing:1px}
+.hw-card .hw-val{font-size:22px;font-weight:700;color:#58a6ff;margin-bottom:2px}
+.hw-card .hw-bar{background:#21262d;height:6px;border-radius:3px;margin:4px 0}
+.hw-card .hw-bar-fill{height:100%;border-radius:3px;transition:width .5s}
+.hw-card .hw-row{font-size:11px;display:flex;justify-content:space-between;margin:2px 0}
+.hw-card .hw-row b{color:#58a6ff}
+.bar-gpu{background:linear-gradient(90deg,#238636,#3fb950)}
+.bar-vram{background:linear-gradient(90deg,#1f6feb,#58a6ff)}
+.bar-cpu{background:linear-gradient(90deg,#9e6a03,#d29922)}
+.bar-ram{background:linear-gradient(90deg,#8957e5,#bc8cff)}
+.slots-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px;margin-bottom:10px}
+.slot{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px;position:relative;min-height:200px}
+.slot.active{border-color:#3fb950;background:#0d1f0d}
+.slot h3{font-size:13px;color:#8b949e;margin-bottom:6px}
+.slot .r{font-size:11px;margin:2px 0;display:flex;justify-content:space-between}
+.slot .r b{color:#58a6ff}
+.slot .tps-big{font-size:36px;font-weight:800;text-align:center;margin:8px 0;line-height:1}
+.slot .tps-big.g{color:#3fb950}.slot .tps-big.o{color:#d29922}.slot .tps-big.idle{color:#30363d}
+.slot .tps-label{text-align:center;font-size:10px;color:#8b949e}
+.prog{background:#21262d;height:4px;border-radius:2px;margin-top:6px}
+.prog-fill{height:100%;border-radius:2px;transition:width .3s}
+.pf-gen{background:linear-gradient(90deg,#238636,#3fb950)}
+.mini-chart{height:40px;margin-top:6px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+.panel{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px}
+.panel h2{font-size:12px;color:#8b949e;margin-bottom:8px;text-transform:uppercase;letter-spacing:1px}
+canvas{width:100%;display:block}
+table{width:100%;border-collapse:collapse;font-size:11px}
+table th{text-align:left;color:#8b949e;padding:4px 6px;border-bottom:1px solid #30363d;font-weight:normal}
+table td{padding:4px 6px;border-bottom:1px solid #21262d}
+.tag{display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:600}
+.tag-gen{background:#238636;color:#fff}.tag-idle{background:#30363d;color:#8b949e}
+@media(max-width:900px){.top{grid-template-columns:repeat(3,1fr)}.hw{grid-template-columns:repeat(2,1fr)}.row{grid-template-columns:1fr}}
+@media(max-width:500px){.top{grid-template-columns:repeat(2,1fr)}.hw{grid-template-columns:1fr}}
+</style></head><body>
+<div class="hdr">
+<h1 id="title">⚡ llama.cpp Monitor</h1>
+<div><span class="status" id="status">● Connecting...</span> <span style="color:#8b949e;font-size:11px;margin-left:8px" id="clock"></span></div>
+</div>
+
+<div class="top">
+<div class="card"><div class="v g" id="genTps">--</div><div class="l">Total Gen tok/s</div><div class="sub" id="genTpsPeak">peak: -- | avg: --</div></div>
+<div class="card"><div class="v" id="promptTps">--</div><div class="l">Prompt tok/s</div><div class="sub" id="promptTpsPeak">peak: --</div></div>
+<div class="card"><div class="v g" id="activeSlots">0</div><div class="l" id="slotLabel">Active / ?</div><div class="sub" id="deferred">queued: 0</div></div>
+<div class="card"><div class="v p" id="totalGenTok">0</div><div class="l">Generated Tokens</div><div class="sub" id="genRate">+0/min</div></div>
+<div class="card"><div class="v" id="totalPromptTok">0</div><div class="l">Prompt Tokens</div><div class="sub" id="promptRate">+0/min</div></div>
+<div class="card"><div class="v" id="totalDecodes">0</div><div class="l">Decode Calls</div><div class="sub" id="busyAvg">busy avg: --</div></div>
+</div>
+
+<!-- Hardware Section (auto-hidden if hw-metrics unavailable) -->
+<div class="hw" id="hwSection" style="display:none">
+<div class="hw-card">
+<h3>🎮 GPU Utilization</h3>
+<div class="hw-val" id="gpuUtil">--%</div>
+<div class="hw-bar"><div class="hw-bar-fill bar-gpu" id="gpuBar" style="width:0%"></div></div>
+<div class="hw-row"><span>Temperature</span><b id="gpuTemp">--°C</b></div>
+<div class="hw-row"><span>Power</span><b id="gpuPower">-- / --W</b></div>
+<div class="hw-row"><span>Fan</span><b id="gpuFan">--%</b></div>
+<div class="hw-row"><span>Clock</span><b id="gpuClock">-- MHz</b></div>
+<canvas id="gpuGraph" height="50" style="margin-top:4px"></canvas>
+</div>
+<div class="hw-card">
+<h3>🖥️ VRAM</h3>
+<div class="hw-val" id="vramUsed">-- / -- GB</div>
+<div class="hw-bar"><div class="hw-bar-fill bar-vram" id="vramBar" style="width:0%"></div></div>
+<div class="hw-row"><span>Used</span><b id="vramUsedMB">-- MiB</b></div>
+<div class="hw-row"><span>Free</span><b id="vramFreeMB">-- MiB</b></div>
+<div class="hw-row"><span>Mem Clock</span><b id="vramClock">-- MHz</b></div>
+<canvas id="vramGraph" height="50" style="margin-top:4px"></canvas>
+</div>
+<div class="hw-card">
+<h3>⚙️ CPU</h3>
+<div class="hw-val" id="cpuUtil">--%</div>
+<div class="hw-bar"><div class="hw-bar-fill bar-cpu" id="cpuBar" style="width:0%"></div></div>
+<div class="hw-row"><span>Frequency</span><b id="cpuFreq">-- MHz</b></div>
+<div class="hw-row"><span>Cores</span><b id="cpuCores">--</b></div>
+<canvas id="cpuGraph" height="50" style="margin-top:4px"></canvas>
+</div>
+<div class="hw-card">
+<h3>💾 RAM</h3>
+<div class="hw-val" id="ramUsed">-- / -- GB</div>
+<div class="hw-bar"><div class="hw-bar-fill bar-ram" id="ramBar" style="width:0%"></div></div>
+<div class="hw-row"><span>Usage</span><b id="ramPercent">--%</b></div>
+<div class="hw-row"><span>Disk</span><b id="diskPercent">--%</b></div>
+<canvas id="ramGraph" height="50" style="margin-top:4px"></canvas>
+</div>
+</div>
+
+<div class="slots-grid" id="slotsGrid"></div>
+
+<div class="row">
+<div class="panel"><h2>📈 Generation Speed (tok/s)</h2><canvas id="genGraph" height="120"></canvas></div>
+<div class="panel"><h2>📈 Active Slots Over Time</h2><canvas id="slotGraph" height="120"></canvas></div>
+</div>
+
+<div class="panel" style="margin-bottom:10px">
+<h2>📋 Completed Requests</h2>
+<table><thead><tr><th>Time</th><th>Slot</th><th>Prompt</th><th>Generated</th><th>Gen tok/s</th><th>Prompt tok/s</th><th>Total Time</th></tr></thead>
+<tbody id="reqBody"></tbody></table>
+</div>
+
+<div class="panel">
+<h2>🔧 Server Stats</h2>
+<div id="serverInfo" style="font-size:11px;color:#8b949e;columns:2;column-gap:30px"></div>
+</div>
+
+<script>
+// ── Configuration ──────────────────────────────────────────────
+// Override these via URL params: ?server=http://host:port&hw=http://host:8083&slots=4
+const params = new URLSearchParams(location.search);
+const SERVER = params.get('server') || location.origin;   // llama.cpp server URL
+const HW_PORT = params.get('hw') || '';                    // hw-metrics sidecar URL (optional)
+const MAX_SLOTS = parseInt(params.get('slots') || '0');    // 0 = auto-detect
+const POLL = parseInt(params.get('poll') || '1000');       // poll interval ms
+const HH = 90;                                            // history length
+
+// ── State ──────────────────────────────────────────────────────
+const genHist=[],slotHist=[],gpuHist=[],vramHist=[],cpuHist=[],ramHist=[];
+let peakGen=0,peakPrompt=0,prevGenTok=0,prevPromptTok=0,requests=[];
+let slotData={},numSlots=MAX_SLOTS,hwAvailable=false,modelInfo='';
+
+function initSlots(n){
+  numSlots=n;
+  slotData={};
+  for(let i=0;i<n;i++)slotData[i]={prevDecoded:0,prevTime:Date.now(),tps:0,tpsHist:[],reqCount:0,active:false,startTime:0};
+}
+if(MAX_SLOTS>0) initSlots(MAX_SLOTS);
+
+// ── Chart helpers ──────────────────────────────────────────────
+function miniSpark(data,color,w,h){
+  const c=document.createElement('canvas');c.width=w*2;c.height=h*2;c.style.width=w+'px';c.style.height=h+'px';
+  const x=c.getContext('2d');if(!data.length)return c;
+  const max=Math.max(...data,1)*1.2,step=c.width/Math.max(data.length-1,1);
+  x.strokeStyle=color;x.lineWidth=2;x.beginPath();
+  data.forEach((v,i)=>{const px=i*step,py=c.height*(1-v/max);i===0?x.moveTo(px,py):x.lineTo(px,py)});
+  x.stroke();x.lineTo(c.width,c.height);x.lineTo(0,c.height);x.closePath();
+  x.fillStyle=color.replace(')',',0.15)').replace('rgb','rgba');x.fill();return c}
+
+function drawMiniGraph(id,data,color,maxO){
+  const c=document.getElementById(id);if(!c)return;const x=c.getContext('2d');
+  c.width=c.offsetWidth*2;c.height=100;x.clearRect(0,0,c.width,c.height);
+  if(!data.length)return;const max=maxO||Math.max(...data,1)*1.2;
+  const w=c.width/60,h=c.height;
+  x.strokeStyle=color;x.lineWidth=2;x.beginPath();
+  data.slice(-60).forEach((v,i)=>{const px=i*w+w/2,py=h*(1-v/max);i===0?x.moveTo(px,py):x.lineTo(px,py)});
+  x.stroke();x.lineTo((Math.min(data.length,60)-1)*w+w/2,h);x.lineTo(w/2,h);x.closePath();
+  x.fillStyle=color.replace(')',',0.1)').replace('rgb','rgba');x.fill()}
+
+function drawChart(canvasId,data,color,label,maxO){
+  const c=document.getElementById(canvasId),x=c.getContext('2d');
+  c.width=c.offsetWidth*2;c.height=240;x.clearRect(0,0,c.width,c.height);
+  if(!data.length)return;const max=maxO||Math.max(...data,1)*1.2;
+  const w=c.width/HH,h=c.height-30;
+  x.strokeStyle='#21262d';x.lineWidth=1;
+  for(let i=0;i<=4;i++){const y=15+h*(1-i/4);x.beginPath();x.moveTo(0,y);x.lineTo(c.width,y);x.stroke();
+  x.fillStyle='#484f58';x.font='18px monospace';x.fillText(Math.round(max*i/4),4,y-4)}
+  x.strokeStyle=color;x.lineWidth=3;x.beginPath();
+  data.forEach((v,i)=>{const px=i*w+w/2,py=15+h*(1-v/max);i===0?x.moveTo(px,py):x.lineTo(px,py)});
+  x.stroke();const last=data[data.length-1];
+  if(last!==undefined){x.fillStyle=color;x.font='bold 20px monospace';x.fillText(last.toFixed(1)+' '+label,c.width-200,25)}
+  x.lineTo((data.length-1)*w+w/2,15+h);x.lineTo(w/2,15+h);x.closePath();
+  x.fillStyle=color.replace(')',',0.08)').replace('rgb','rgba');x.fill()}
+
+// ── Hardware metrics (optional sidecar) ────────────────────────
+async function updateHW(){
+  if(!HW_PORT)return;
+  try{
+    const r=await fetch(HW_PORT+'/hw');const d=await r.json();
+    if(!hwAvailable){hwAvailable=true;document.getElementById('hwSection').style.display=''}
+    if(d.gpu){
+      const g=d.gpu;const pct=parseFloat(g.util);
+      document.getElementById('gpuUtil').textContent=g.util+'%';
+      document.getElementById('gpuBar').style.width=g.util+'%';
+      document.getElementById('gpuTemp').textContent=g.temp+'°C';
+      document.getElementById('gpuPower').textContent=parseFloat(g.power).toFixed(0)+'W / '+parseFloat(g.power_limit).toFixed(0)+'W';
+      document.getElementById('gpuFan').textContent=g.fan+'%';
+      document.getElementById('gpuClock').textContent=g.clock_gpu+' MHz';
+      const vu=parseFloat(g.vram_used),vt=parseFloat(g.vram_total),vf=parseFloat(g.vram_free);
+      document.getElementById('vramUsed').textContent=(vu/1024).toFixed(1)+' / '+(vt/1024).toFixed(1)+' GB';
+      document.getElementById('vramBar').style.width=Math.round(vu/vt*100)+'%';
+      document.getElementById('vramUsedMB').textContent=g.vram_used+' MiB';
+      document.getElementById('vramFreeMB').textContent=g.vram_free+' MiB';
+      document.getElementById('vramClock').textContent=g.clock_mem+' MHz';
+      gpuHist.push(pct);if(gpuHist.length>60)gpuHist.shift();
+      vramHist.push(vu/vt*100);if(vramHist.length>60)vramHist.shift();
+      drawMiniGraph('gpuGraph',gpuHist,'rgb(63,185,80)',100);
+      drawMiniGraph('vramGraph',vramHist,'rgb(88,166,255)',100)}
+    if(d.cpu){
+      document.getElementById('cpuUtil').textContent=d.cpu.percent+'%';
+      document.getElementById('cpuBar').style.width=d.cpu.percent+'%';
+      document.getElementById('cpuFreq').textContent=d.cpu.freq+' MHz';
+      document.getElementById('cpuCores').textContent=d.cpu.cores+' cores / '+d.cpu.threads+' threads';
+      cpuHist.push(d.cpu.percent);if(cpuHist.length>60)cpuHist.shift();
+      drawMiniGraph('cpuGraph',cpuHist,'rgb(210,153,34)',100)}
+    if(d.ram){
+      document.getElementById('ramUsed').textContent=d.ram.used+' / '+d.ram.total+' GB';
+      document.getElementById('ramBar').style.width=d.ram.percent+'%';
+      document.getElementById('ramPercent').textContent=d.ram.percent+'%';
+      ramHist.push(d.ram.percent);if(ramHist.length>60)ramHist.shift();
+      drawMiniGraph('ramGraph',ramHist,'rgb(188,140,255)',100)}
+    if(d.disk)document.getElementById('diskPercent').textContent=d.disk.percent+'%';
+  }catch(e){}}
+
+// ── Main update loop ───────────────────────────────────────────
+async function update(){
+  const st=document.getElementById('status');
+  document.getElementById('clock').textContent=new Date().toLocaleTimeString();
+  let metrics,slots;
+  try{
+    const[mr,sr]=await Promise.all([fetch(SERVER+'/metrics'),fetch(SERVER+'/slots')]);
+    metrics=await mr.text();slots=await sr.json();
+    st.textContent='● Online';st.className='status';
+  }catch(e){st.textContent='● Offline';st.className='status down';return}
+
+  // Auto-detect slots on first successful fetch
+  if(numSlots===0&&slots.length>0){initSlots(slots.length)}
+
+  const g=k=>{const m=metrics.match(new RegExp(k+'\\s+([\\d.]+)'));return m?parseFloat(m[1]):0};
+  const genTps=g('llamacpp:predicted_tokens_seconds');
+  const promptTps=g('llamacpp:prompt_tokens_seconds');
+  const totalGen=g('llamacpp:tokens_predicted_total');
+  const totalPrompt=g('llamacpp:prompt_tokens_total');
+  const totalDec=g('llamacpp:n_decode_total');
+  const busySlots=g('llamacpp:n_busy_slots_per_decode');
+  const deferred=g('llamacpp:requests_deferred');
+  const genSec=g('llamacpp:tokens_predicted_seconds_total');
+  const promptSec=g('llamacpp:prompt_seconds_total');
+
+  // Auto-detect model from metrics
+  if(!modelInfo){
+    const mm=metrics.match(/llamacpp:model\{[^}]*name="([^"]+)"/);
+    if(mm){modelInfo=mm[1];document.getElementById('title').textContent='⚡ '+modelInfo+' — llama.cpp Monitor'}}
+
+  if(promptTps>peakPrompt)peakPrompt=promptTps;
+  let totalSlotTps=0;const serverAvgTps=genTps;
+  document.getElementById('promptTps').textContent=promptTps>0?promptTps.toFixed(1):'--';
+  document.getElementById('promptTpsPeak').textContent='peak: '+peakPrompt.toFixed(1);
+  document.getElementById('totalGenTok').textContent=Math.round(totalGen).toLocaleString();
+  document.getElementById('totalPromptTok').textContent=Math.round(totalPrompt).toLocaleString();
+  document.getElementById('totalDecodes').textContent=Math.round(totalDec).toLocaleString();
+  document.getElementById('busyAvg').textContent='busy avg: '+(totalDec>0?(busySlots/totalDec).toFixed(2):'--');
+  document.getElementById('deferred').textContent='queued: '+Math.round(deferred);
+
+  let activeCount=0;const grid=document.getElementById('slotsGrid');grid.innerHTML='';const now=Date.now();
+
+  slots.forEach(s=>{
+    const active=s.is_processing;if(active)activeCount++;
+    const decoded=s.next_token?.[0]?.n_decoded||0;
+    const remain=s.next_token?.[0]?.n_remain||0;
+    const total=decoded+remain,pct=total>0?Math.round(decoded/total*100):0;
+    if(!slotData[s.id])slotData[s.id]={prevDecoded:0,prevTime:Date.now(),tps:0,tpsHist:[],reqCount:0,active:false,startTime:0};
+    const sd=slotData[s.id];
+    const dt=(now-sd.prevTime)/1000;
+    if(active&&dt>0&&decoded>sd.prevDecoded){sd.tps=(decoded-sd.prevDecoded)/dt}
+    else if(!active){sd.tps=0}
+    if(active)totalSlotTps+=sd.tps;
+    sd.tpsHist.push(active?sd.tps:0);if(sd.tpsHist.length>30)sd.tpsHist.shift();
+    if(active&&!sd.active){sd.startTime=now;sd.active=true}
+    if(!active&&sd.active){sd.active=false;sd.reqCount++;
+      const dur=((now-sd.startTime)/1000).toFixed(1);
+      const avg=sd.tpsHist.filter(t=>t>0);const a=avg.length?(avg.reduce((a,b)=>a+b,0)/avg.length).toFixed(1):'--';
+      requests.unshift({time:new Date().toLocaleTimeString(),slot:s.id,genTok:sd.prevDecoded,genSpeed:a,promptSpeed:promptTps.toFixed(1),duration:dur+'s'});
+      if(requests.length>20)requests.pop();sd.tpsHist=[]}
+    sd.prevDecoded=decoded;sd.prevTime=now;
+    const div=document.createElement('div');div.className='slot'+(active?' active':'');
+    const td=active?sd.tps.toFixed(1):'--',tc=active?(sd.tps>40?'g':'o'):'idle';
+    div.innerHTML=`<h3>${active?'🟢':'⚪'} Slot ${s.id} <span class="tag ${active?'tag-gen':'tag-idle'}" style="float:right">${active?'GEN':'IDLE'}</span></h3>
+    <div class="tps-big ${tc}">${td}</div><div class="tps-label">${active?'tok/s (live)':'tok/s'}</div>
+    <div class="r"><span>Decoded</span><b>${decoded.toLocaleString()}</b></div>
+    <div class="r"><span>Remaining</span><b>${remain.toLocaleString()}</b></div>
+    <div class="r"><span>Context</span><b>${(s.n_ctx/1024).toFixed(0)}K</b></div>
+    <div class="r"><span>Requests</span><b>${sd.reqCount}</b></div>
+    ${active?`<div class="prog"><div class="prog-fill pf-gen" style="width:${pct}%"></div></div>
+    <div style="font-size:10px;color:#3fb950;text-align:right;margin-top:2px">${pct}% (${decoded}/${total})</div>`:''}
+    <div class="mini-chart" id="mc${s.id}"></div>`;
+    grid.appendChild(div);
+    const mc=div.querySelector('.mini-chart');
+    mc.appendChild(miniSpark(sd.tpsHist,'rgb(63,185,80)',mc.offsetWidth||150,40))});
+
+  document.getElementById('activeSlots').textContent=activeCount;
+  document.getElementById('slotLabel').textContent='Active / '+(numSlots||slots.length);
+  document.getElementById('activeSlots').className='v '+(activeCount>0?'g':'');
+  const displayTps=totalSlotTps>0?totalSlotTps:serverAvgTps;
+  if(displayTps>peakGen)peakGen=displayTps;
+  document.getElementById('genTps').textContent=displayTps>0?displayTps.toFixed(1):'--';
+  document.getElementById('genTps').className='v '+(displayTps>40?'g':displayTps>15?'o':displayTps>0?'r':'');
+  document.getElementById('genTpsPeak').textContent='peak: '+peakGen.toFixed(1)+' | avg: '+(serverAvgTps>0?serverAvgTps.toFixed(1):'--');
+
+  genHist.push(displayTps);if(genHist.length>HH)genHist.shift();
+  slotHist.push(activeCount);if(slotHist.length>HH)slotHist.shift();
+  drawChart('genGraph',genHist,'rgb(63,185,80)','tok/s');
+  drawChart('slotGraph',slotHist,'rgb(210,153,34)','slots',numSlots||4);
+
+  document.getElementById('reqBody').innerHTML=requests.map(r=>
+    `<tr><td>${r.time}</td><td>Slot ${r.slot}</td><td>~</td><td>${r.genTok.toLocaleString()}</td>
+    <td><b>${r.genSpeed}</b> tok/s</td><td>${r.promptSpeed} tok/s</td><td>${r.duration}</td></tr>`).join('');
+
+  document.getElementById('serverInfo').innerHTML=`
+  <b>Total generated:</b> ${Math.round(totalGen).toLocaleString()} tokens<br>
+  <b>Total prompt:</b> ${Math.round(totalPrompt).toLocaleString()} tokens<br>
+  <b>Time generating:</b> ${genSec.toFixed(1)}s<br>
+  <b>Time prompting:</b> ${promptSec.toFixed(1)}s<br>
+  <b>Avg gen (all time):</b> ${genSec>0?(totalGen/genSec).toFixed(1):'--'} tok/s<br>
+  <b>Avg prompt (all time):</b> ${promptSec>0?(totalPrompt/promptSec).toFixed(1):'--'} tok/s`}
+
+setInterval(update,POLL);
+if(HW_PORT)setInterval(updateHW,2000);
+update();updateHW();
+</script></body></html>
